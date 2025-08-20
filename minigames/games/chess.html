@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neon Chess — vs AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body { background: #050917; }
+      .page { max-width: 980px; margin: 0 auto; padding: 24px; }
+      .topbar { display:flex; align-items:center; justify-content:space-between; gap: 12px; }
+      .back { color:#9ecbff; text-decoration:none; opacity:0.9; }
+      .board { width: min(92vw, 520px); height: min(92vw, 520px); margin: 24px auto; border-radius: 10px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.55); border:1px solid rgba(255,255,255,0.12); }
+      .row { display:flex; }
+      .tile { flex:1; aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size: clamp(22px, 6vw, 36px); user-select:none; cursor:pointer; transition: background-color 140ms ease; }
+      .light { background:#18243a; }
+      .dark { background:#0f1626; }
+      .tile.highlight { outline: 2px solid rgba(88,255,217,0.65); z-index:2; position:relative; }
+      .tile.in-check { box-shadow: inset 0 0 0 3px rgba(255,82,82,0.7); }
+      .status { text-align:center; opacity:0.85; }
+      .controls { display:flex; gap:10px; justify-content:center; margin-top:12px; }
+      .button { background: linear-gradient(90deg, #58ffd9, #85b6ff); color:#051024; padding:10px 16px; border:none; border-radius:10px; cursor:pointer; font-family: inherit; font-weight:600; }
+      .button.secondary { background: transparent; color:#cfe4ff; border:1px solid rgba(255,255,255,0.15); }
+    </style>
+  </head>
+  <body>
+    <div class="ambient-bg"></div>
+    <div class="page">
+      <div class="topbar">
+        <a class="back" href="../index.html">← Back</a>
+        <h1 style="margin: 10px 0; background: linear-gradient(90deg, #58ffd9, #85b6ff); -webkit-background-clip:text; background-clip:text; color:transparent;">Chess</h1>
+        <div style="width:40px"></div>
+      </div>
+      <div id="board" class="board"></div>
+      <div class="status" id="status">Your move (White)</div>
+      <div class="controls">
+        <button class="button" id="newGame">New Game</button>
+        <button class="button secondary" id="toggleAI">AI: On</button>
+      </div>
+    </div>
+    <script>
+      const PIECES = {
+        wK:'♔', wQ:'♕', wR:'♖', wB:'♗', wN:'♘', wP:'♙',
+        bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
+      };
+
+      function initialBoard() {
+        return [
+          ['bR','bN','bB','bQ','bK','bB','bN','bR'],
+          ['bP','bP','bP','bP','bP','bP','bP','bP'],
+          [null,null,null,null,null,null,null,null],
+          [null,null,null,null,null,null,null,null],
+          [null,null,null,null,null,null,null,null],
+          [null,null,null,null,null,null,null,null],
+          ['wP','wP','wP','wP','wP','wP','wP','wP'],
+          ['wR','wN','wB','wQ','wK','wB','wN','wR'],
+        ];
+      }
+
+      let state = {
+        board: initialBoard(),
+        turn: 'w',
+        selected: null,
+        legalTargets: [],
+        gameOver: false,
+        aiEnabled: true,
+      };
+
+      const boardEl = document.getElementById('board');
+      const statusEl = document.getElementById('status');
+      const newBtn = document.getElementById('newGame');
+      const toggleAI = document.getElementById('toggleAI');
+
+      function inBounds(r,c){ return r>=0 && r<8 && c>=0 && c<8; }
+      function pieceColor(code){ return code ? code[0] : null; }
+
+      function generatePseudoMoves(board, turn) {
+        const moves = [];
+        const directions = {
+          wP: [[-1,0]], bP: [[1,0]],
+          wK: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]],
+          bK: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]],
+          wN: [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]],
+          bN: [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]],
+          wB: [[1,1],[1,-1],[-1,1],[-1,-1]], bB: [[1,1],[1,-1],[-1,1],[-1,-1]],
+          wR: [[1,0],[-1,0],[0,1],[0,-1]], bR: [[1,0],[-1,0],[0,1],[0,-1]],
+          wQ: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]],
+          bQ: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]],
+        };
+
+        for (let r=0; r<8; r++){
+          for (let c=0; c<8; c++){
+            const p = board[r][c];
+            if (!p || pieceColor(p) !== turn) continue;
+            const key = p;
+            const dirs = directions[key] || [];
+            const isSlider = /[BQRbqr]/.test(key[1]);
+            if (key[1] === 'P'){
+              const dir = turn==='w' ? -1 : 1;
+              const startRow = turn==='w' ? 6 : 1;
+              const one = [r+dir, c];
+              if (inBounds(...one) && !board[one[0]][one[1]]) {
+                moves.push({from:[r,c], to:one});
+                const two = [r+2*dir, c];
+                if (r===startRow && !board[two[0]][two[1]]) moves.push({from:[r,c], to:two});
+              }
+              for (const dc of [-1,1]){
+                const cap = [r+dir, c+dc];
+                if (inBounds(...cap) && board[cap[0]][cap[1]] && pieceColor(board[cap[0]][cap[1]]) !== turn && board[cap[0]][cap[1]][1] !== 'K'){
+                  moves.push({from:[r,c], to:cap});
+                }
+              }
+              continue;
+            }
+
+            for (const [dr,dc] of dirs){
+              let nr=r+dr, nc=c+dc;
+              while (inBounds(nr,nc)){
+                const dest = board[nr][nc];
+                if (!dest){
+                  moves.push({from:[r,c], to:[nr,nc]});
+                } else {
+                  if (pieceColor(dest) !== turn && dest[1] !== 'K') moves.push({from:[r,c], to:[nr,nc]});
+                  break;
+                }
+                if (!isSlider) break;
+                nr+=dr; nc+=dc;
+              }
+            }
+          }
+        }
+        return moves;
+      }
+
+      function applyMove(board, move){
+        const nb = board.map(row=>row.slice());
+        const [fr,fc] = move.from; const [tr,tc] = move.to;
+        const piece = nb[fr][fc];
+        nb[fr][fc] = null;
+        nb[tr][tc] = piece;
+        if (piece && piece[1]==='P'){
+          const last = tr === 0 || tr === 7;
+          if (last){ nb[tr][tc] = piece[0] + 'Q'; }
+        }
+        return nb;
+      }
+
+      function findKing(board, color){
+        for (let r=0;r<8;r++){
+          for (let c=0;c<8;c++){
+            if (board[r][c] === color+'K') return [r,c];
+          }
+        }
+        return null;
+      }
+
+      function squareAttackedBy(board, r, c, byColor){
+        // knights
+        const knightDeltas = [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]];
+        for (const [dr,dc] of knightDeltas){
+          const nr=r+dr, nc=c+dc;
+          if (!inBounds(nr,nc)) continue;
+          const p = board[nr][nc];
+          if (p && p[0]===byColor && p[1]==='N') return true;
+        }
+        // king
+        for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++){
+          if (dr===0 && dc===0) continue;
+          const nr=r+dr, nc=c+dc;
+          if (!inBounds(nr,nc)) continue;
+          const p = board[nr][nc];
+          if (p && p[0]===byColor && p[1]==='K') return true;
+        }
+        // pawns
+        const pawnDir = byColor==='w' ? -1 : 1;
+        for (const dc of [-1,1]){
+          const nr = r - pawnDir; // reverse because we're checking attackers
+          const nc = c - dc;
+          if (inBounds(nr,nc)){
+            const p = board[nr][nc];
+            if (p && p[0]===byColor && p[1]==='P') return true;
+          }
+        }
+        // sliders: bishops/rooks/queens
+        const sliderDirs = [
+          [1,0],[-1,0],[0,1],[0,-1], // rook/queen
+          [1,1],[1,-1],[-1,1],[-1,-1] // bishop/queen
+        ];
+        for (const [dr,dc] of sliderDirs){
+          let nr=r+dr, nc=c+dc;
+          while (inBounds(nr,nc)){
+            const p = board[nr][nc];
+            if (p){
+              if (p[0]===byColor){
+                if ((dr===0||dc===0) && (p[1]==='R' || p[1]==='Q')) return true;
+                if ((dr!==0&&dc!==0) && (p[1]==='B' || p[1]==='Q')) return true;
+              }
+              break;
+            }
+            nr+=dr; nc+=dc;
+          }
+        }
+        return false;
+      }
+
+      function isInCheck(board, color){
+        const k = findKing(board, color);
+        if (!k) return true; // no king: treat as in check (illegal)
+        return squareAttackedBy(board, k[0], k[1], color==='w' ? 'b' : 'w');
+      }
+
+      function generateLegalMoves(board, turn){
+        const pseudo = generatePseudoMoves(board, turn);
+        const legal = [];
+        for (const m of pseudo){
+          const nb = applyMove(board, m);
+          if (!isInCheck(nb, turn)) legal.push(m);
+        }
+        return legal;
+      }
+
+      function evaluateBoard(board){
+        const values = {K:1000,Q:9,R:5,B:3,N:3,P:1};
+        let score = 0;
+        for (let r=0;r<8;r++){
+          for (let c=0;c<8;c++){
+            const p = board[r][c];
+            if (!p) continue;
+            const val = values[p[1]] || 0;
+            score += (p[0]==='w' ? val : -val);
+          }
+        }
+        return score;
+      }
+
+      function aiMove(){
+        const turn = state.turn;
+        const legal = generateLegalMoves(state.board, turn);
+        if (legal.length === 0){
+          if (isInCheck(state.board, turn)) endGame(turn==='w'? 'Checkmate — Black wins' : 'Checkmate — White wins');
+          else endGame('Stalemate');
+          return;
+        }
+        const depth = 2;
+        const result = minimax(state.board, turn, depth, -1e9, 1e9, state.lastAIMove);
+        let best = result.move || legal[Math.floor(Math.random()*legal.length)];
+        commitMove(best);
+        state.lastAIMove = best;
+      }
+
+      function minimax(board, turn, depth, alpha, beta, lastAIMove){
+        const opponent = turn==='w' ? 'b' : 'w';
+        const legal = generateLegalMoves(board, turn);
+        const inCheck = isInCheck(board, turn);
+        if (depth === 0 || legal.length === 0){
+          if (legal.length === 0){
+            if (inCheck) return { score: turn==='w' ? -10000 : 10000 };
+            return { score: 0 };
+          }
+          // mobility bonus
+          const mobility = legal.length * 0.05 * (turn==='w'? 1 : -1);
+          return { score: evaluateBoard(board) + mobility };
+        }
+        let bestMove = null;
+        if (turn === 'w'){
+          let bestScore = -1e9;
+          for (const m of legal){
+            const nb = applyMove(board, m);
+            const child = minimax(nb, opponent, depth-1, alpha, beta, lastAIMove);
+            let score = child.score;
+            // discourage immediate back-and-forth for AI (only when AI is black and this is its move next)
+            if (opponent==='b' && lastAIMove && lastAIMove.from && lastAIMove.to){
+              if (m.from[0]===lastAIMove.to[0] && m.from[1]===lastAIMove.to[1] && m.to[0]===lastAIMove.from[0] && m.to[1]===lastAIMove.from[1]){
+                score -= 0.2;
+              }
+            }
+            if (score > bestScore){ bestScore = score; bestMove = m; }
+            alpha = Math.max(alpha, bestScore);
+            if (beta <= alpha) break;
+          }
+          return { score: bestScore, move: bestMove };
+        } else {
+          let bestScore = 1e9;
+          for (const m of legal){
+            const nb = applyMove(board, m);
+            const child = minimax(nb, opponent, depth-1, alpha, beta, lastAIMove);
+            let score = child.score;
+            if (lastAIMove && lastAIMove.from && lastAIMove.to){
+              if (m.from[0]===lastAIMove.to[0] && m.from[1]===lastAIMove.to[1] && m.to[0]===lastAIMove.from[0] && m.to[1]===lastAIMove.from[1]){
+                score += 0.2; // worse for black to repeat
+              }
+            }
+            if (score < bestScore){ bestScore = score; bestMove = m; }
+            beta = Math.min(beta, bestScore);
+            if (beta <= alpha) break;
+          }
+          return { score: bestScore, move: bestMove };
+        }
+      }
+
+      function commitMove(move){
+        state.board = applyMove(state.board, move);
+        state.turn = state.turn === 'w' ? 'b' : 'w';
+        draw();
+        const turnName = state.turn==='w' ? 'Your move (White)' : 'AI thinking… (Black)';
+        statusEl.textContent = state.gameOver ? 'Game over' : turnName;
+        if (!state.gameOver && state.turn==='b' && state.aiEnabled) {
+          setTimeout(aiMove, 350);
+        }
+      }
+
+      function draw(){
+        boardEl.innerHTML = '';
+        for (let r=0;r<8;r++){
+          const row = document.createElement('div');
+          row.className = 'row';
+          for (let c=0;c<8;c++){
+            const tile = document.createElement('div');
+            const isLight = (r+c)%2===0; 
+            tile.className = 'tile ' + (isLight? 'light':'dark');
+            const piece = state.board[r][c];
+            if (piece) tile.textContent = PIECES[piece];
+            if (!state.gameOver && state.turn==='w'){
+              tile.addEventListener('click', () => onTileClick(r,c));
+            }
+            if (state.selected && state.legalTargets.some(([tr,tc])=>tr===r&&tc===c)){
+              tile.classList.add('highlight');
+            }
+            const whiteInCheck = isInCheck(state.board, 'w');
+            const blackInCheck = isInCheck(state.board, 'b');
+            if (piece === 'wK' && whiteInCheck) tile.classList.add('in-check');
+            if (piece === 'bK' && blackInCheck) tile.classList.add('in-check');
+            row.appendChild(tile);
+          }
+          boardEl.appendChild(row);
+        }
+      }
+
+      function onTileClick(r,c){
+        if (state.gameOver || state.turn !== 'w') return;
+        const sel = state.selected;
+        const piece = state.board[r][c];
+        if (sel){
+          const isLegal = state.legalTargets.some(([tr,tc])=>tr===r&&tc===c);
+          if (isLegal){
+            commitMove({from: sel, to:[r,c]});
+            state.selected = null; state.legalTargets = [];
+            return;
+          }
+        }
+        if (piece && pieceColor(piece)==='w'){
+          state.selected = [r,c];
+          state.legalTargets = generateLegalMoves(state.board, 'w')
+            .filter(m=>m.from[0]===r && m.from[1]===c)
+            .map(m=>m.to);
+          draw();
+        } else {
+          state.selected = null; state.legalTargets = []; draw();
+        }
+      }
+
+      function endGame(message){
+        state.gameOver = true;
+        statusEl.textContent = message;
+      }
+
+      newBtn.addEventListener('click', ()=>{
+        state.board = initialBoard();
+        state.turn = 'w';
+        state.selected = null;
+        state.legalTargets = [];
+        state.gameOver = false;
+        state.lastAIMove = null;
+        statusEl.textContent = 'Your move (White)';
+        draw();
+      });
+
+      toggleAI.addEventListener('click', ()=>{
+        state.aiEnabled = !state.aiEnabled;
+        toggleAI.textContent = 'AI: ' + (state.aiEnabled ? 'On' : 'Off');
+      });
+
+      // After every move, check for mate/stalemate before scheduling AI
+      const _oldCommit = commitMove;
+      commitMove = function(move){
+        state.board = applyMove(state.board, move);
+        state.turn = state.turn === 'w' ? 'b' : 'w';
+        draw();
+        if (state.gameOver) return;
+        const noMoves = generateLegalMoves(state.board, state.turn).length === 0;
+        if (noMoves){
+          if (isInCheck(state.board, state.turn)) endGame(state.turn==='w' ? 'Checkmate — Black wins' : 'Checkmate — White wins');
+          else endGame('Stalemate');
+          return;
+        }
+        const turnName = state.turn==='w' ? 'Your move (White)' : 'AI thinking… (Black)';
+        statusEl.textContent = turnName;
+        if (state.turn==='b' && state.aiEnabled) setTimeout(aiMove, 350);
+      }
+
+      draw();
+    </script>
+  </body>
+</html>
+
+
