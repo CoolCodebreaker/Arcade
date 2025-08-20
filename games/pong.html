@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ping Pong — vs AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body { background: #060b1a; }
+      .page { max-width: 980px; margin: 0 auto; padding: 24px; }
+      .topbar { display:flex; align-items:center; justify-content:space-between; gap: 12px; }
+      .back { color:#9ecbff; text-decoration:none; opacity:0.9; }
+      canvas { display:block; margin: 20px auto; width: min(92vw, 900px); height: auto; border-radius: 14px; border:1px solid rgba(255,255,255,0.12); box-shadow: 0 14px 44px rgba(0,0,0,0.55); background: radial-gradient(800px 400px at 40% 50%, rgba(88,255,217,0.08), transparent 60%), radial-gradient(800px 400px at 70% 30%, rgba(255,106,219,0.08), transparent 60%), #0a1430; }
+      .hud { text-align:center; margin-top: 8px; opacity:0.9; }
+      .controls { display:flex; gap:10px; justify-content:center; margin-top:12px; }
+      .button { background: linear-gradient(90deg, #58ffd9, #85b6ff); color:#051024; padding:10px 16px; border:none; border-radius:10px; cursor:pointer; font-family: inherit; font-weight:600; }
+      .button.secondary { background: transparent; color:#cfe4ff; border:1px solid rgba(255,255,255,0.15); }
+    </style>
+  </head>
+  <body>
+    <div class="ambient-bg"></div>
+    <div class="page">
+      <div class="topbar">
+        <a class="back" href="../index.html">← Back</a>
+        <h1 style="margin: 10px 0; background: linear-gradient(90deg, #58ffd9, #85b6ff); -webkit-background-clip:text; background-clip:text; color:transparent;">Ping Pong</h1>
+        <div style="width:40px"></div>
+      </div>
+      <canvas id="game" width="900" height="520"></canvas>
+      <div class="hud"><span id="score">0 : 0</span></div>
+      <div class="controls">
+        <button class="button" id="newGame">New Game</button>
+        <button class="button secondary" id="toggleAI">AI: On</button>
+      </div>
+    </div>
+    <script>
+      const canvas = document.getElementById('game');
+      const ctx = canvas.getContext('2d');
+      const scoreEl = document.getElementById('score');
+      const newBtn = document.getElementById('newGame');
+      const toggleAI = document.getElementById('toggleAI');
+
+      const W = canvas.width, H = canvas.height;
+      const PADDLE_W = 12, PADDLE_H = 90, BALL_R = 9;
+      const LEFT_X = 30, RIGHT_X = W - 30 - PADDLE_W;
+
+      const state = {
+        leftY: H/2 - PADDLE_H/2,
+        rightY: H/2 - PADDLE_H/2,
+        ballX: W/2,
+        ballY: H/2,
+        ballVX: 4.2,
+        ballVY: 2.6,
+        leftScore: 0,
+        rightScore: 0,
+        keys: { up:false, down:false },
+        aiEnabled: true,
+        running: true,
+      };
+
+      function resetBall(toLeft = false){
+        state.ballX = W/2; state.ballY = H/2;
+        const speed = 4 + Math.random()*2.5;
+        const angle = (Math.random()*0.6 - 0.3);
+        state.ballVX = (toLeft?-1:1) * speed * Math.cos(angle);
+        state.ballVY = speed * Math.sin(angle);
+      }
+
+      function drawCourt(){
+        ctx.clearRect(0,0,W,H);
+        ctx.fillStyle = '#0a1430';
+        ctx.fillRect(0,0,W,H);
+        // glow center line
+        ctx.strokeStyle = 'rgba(133, 182, 255, 0.55)';
+        ctx.setLineDash([12,16]);
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(W/2, 20); ctx.lineTo(W/2, H-20); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      function drawObjects(){
+        // paddles with glow
+        const gradientLeft = ctx.createLinearGradient(LEFT_X,0,LEFT_X+PADDLE_W,0);
+        gradientLeft.addColorStop(0,'#58ffd9'); gradientLeft.addColorStop(1,'#85b6ff');
+        ctx.fillStyle = gradientLeft;
+        ctx.fillRect(LEFT_X, state.leftY, PADDLE_W, PADDLE_H);
+
+        const gradientRight = ctx.createLinearGradient(RIGHT_X,0,RIGHT_X+PADDLE_W,0);
+        gradientRight.addColorStop(0,'#ff6adb'); gradientRight.addColorStop(1,'#85b6ff');
+        ctx.fillStyle = gradientRight;
+        ctx.fillRect(RIGHT_X, state.rightY, PADDLE_W, PADDLE_H);
+
+        // ball
+        const ballGrad = ctx.createRadialGradient(state.ballX, state.ballY, 2, state.ballX, state.ballY, 16);
+        ballGrad.addColorStop(0,'#ffffff'); ballGrad.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle = '#e6f0ff';
+        ctx.beginPath(); ctx.arc(state.ballX, state.ballY, BALL_R, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = ballGrad; ctx.beginPath(); ctx.arc(state.ballX, state.ballY, BALL_R*2, 0, Math.PI*2); ctx.fill();
+      }
+
+      function update(){
+        if (!state.running) return;
+        // player paddle
+        const speed = 6.0;
+        if (state.keys.up) state.leftY -= speed;
+        if (state.keys.down) state.leftY += speed;
+        state.leftY = Math.max(20, Math.min(H-20-PADDLE_H, state.leftY));
+
+        // AI paddle: proportional controller with anticipation
+        if (state.aiEnabled){
+          const target = state.ballY - PADDLE_H/2 + Math.sign(state.ballVY) * 12;
+          const error = target - state.rightY;
+          const aiSpeed = 3.6 + Math.min(2.5, Math.abs(state.ballVX)*0.25);
+          state.rightY += Math.sign(error) * Math.min(Math.abs(error), aiSpeed);
+          state.rightY = Math.max(20, Math.min(H-20-PADDLE_H, state.rightY));
+        }
+
+        // ball
+        state.ballX += state.ballVX; state.ballY += state.ballVY;
+        if (state.ballY < 20 + BALL_R || state.ballY > H-20 - BALL_R){
+          state.ballVY *= -1; state.ballY = Math.max(20+BALL_R, Math.min(H-20-BALL_R, state.ballY));
+        }
+
+        // collisions with paddles
+        function collide(px, py){
+          return state.ballX+BALL_R>px && state.ballX-BALL_R<px+PADDLE_W && state.ballY+BALL_R>py && state.ballY-BALL_R<py+PADDLE_H;
+        }
+        if (collide(LEFT_X, state.leftY) && state.ballVX < 0){
+          const rel = (state.ballY - (state.leftY + PADDLE_H/2)) / (PADDLE_H/2);
+          const angle = rel * 0.7;
+          const speedUp = 1.05;
+          const speedCurrent = Math.hypot(state.ballVX, state.ballVY) * speedUp;
+          state.ballVX = Math.cos(angle) * speedCurrent;
+          state.ballVY = Math.sin(angle) * speedCurrent;
+          state.ballX = LEFT_X + PADDLE_W + BALL_R + 1;
+        }
+        if (collide(RIGHT_X, state.rightY) && state.ballVX > 0){
+          const rel = (state.ballY - (state.rightY + PADDLE_H/2)) / (PADDLE_H/2);
+          const angle = Math.PI - rel * 0.7;
+          const speedUp = 1.04;
+          const speedCurrent = Math.hypot(state.ballVX, state.ballVY) * speedUp;
+          state.ballVX = Math.cos(angle) * speedCurrent;
+          state.ballVY = Math.sin(angle) * speedCurrent;
+          state.ballX = RIGHT_X - BALL_R - 1;
+        }
+
+        // scoring
+        if (state.ballX < -BALL_R){ state.rightScore++; scoreEl.textContent = state.leftScore + ' : ' + state.rightScore; resetBall(false); }
+        if (state.ballX > W+BALL_R){ state.leftScore++; scoreEl.textContent = state.leftScore + ' : ' + state.rightScore; resetBall(true); }
+      }
+
+      function frame(){
+        update();
+        drawCourt();
+        drawObjects();
+        requestAnimationFrame(frame);
+      }
+
+      document.addEventListener('keydown', (e)=>{
+        if (e.key === 'ArrowUp' || e.key === 'w') state.keys.up = true;
+        if (e.key === 'ArrowDown' || e.key === 's') state.keys.down = true;
+      });
+      document.addEventListener('keyup', (e)=>{
+        if (e.key === 'ArrowUp' || e.key === 'w') state.keys.up = false;
+        if (e.key === 'ArrowDown' || e.key === 's') state.keys.down = false;
+      });
+
+      newBtn.addEventListener('click', ()=>{
+        state.leftY = H/2 - PADDLE_H/2; state.rightY = H/2 - PADDLE_H/2;
+        state.leftScore = 0; state.rightScore = 0; scoreEl.textContent = '0 : 0';
+        state.running = true; resetBall(Math.random()<0.5);
+      });
+      toggleAI.addEventListener('click', ()=>{
+        state.aiEnabled = !state.aiEnabled; toggleAI.textContent = 'AI: ' + (state.aiEnabled ? 'On' : 'Off');
+      });
+
+      resetBall(Math.random()<0.5);
+      frame();
+    </script>
+  </body>
+</html>
+
+
