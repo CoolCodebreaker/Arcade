@@ -2,22 +2,91 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
     <title>Ping Pong — vs AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../styles.css" />
     <style>
-      body { background: #060b1a; }
+      body { 
+        background: #060b1a; 
+        margin: 0;
+        padding: 0;
+        overflow-x: hidden;
+        touch-action: none;
+      }
       .page { max-width: 980px; margin: 0 auto; padding: 24px; }
       .topbar { display:flex; align-items:center; justify-content:space-between; gap: 12px; }
       .back { color:#9ecbff; text-decoration:none; opacity:0.9; }
-      canvas { display:block; margin: 20px auto; width: min(92vw, 900px); height: auto; border-radius: 14px; border:1px solid rgba(255,255,255,0.12); box-shadow: 0 14px 44px rgba(0,0,0,0.55); background: radial-gradient(800px 400px at 40% 50%, rgba(88,255,217,0.08), transparent 60%), radial-gradient(800px 400px at 70% 30%, rgba(255,106,219,0.08), transparent 60%), #0a1430; }
+      canvas { 
+        display:block; 
+        margin: 20px auto; 
+        width: min(92vw, 900px); 
+        height: auto; 
+        border-radius: 14px; 
+        border:1px solid rgba(255,255,255,0.12); 
+        box-shadow: 0 14px 44px rgba(0,0,0,0.55); 
+        background: radial-gradient(800px 400px at 40% 50%, rgba(88,255,217,0.08), transparent 60%), radial-gradient(800px 400px at 70% 30%, rgba(255,106,219,0.08), transparent 60%), #0a1430;
+        touch-action: none;
+      }
       .hud { text-align:center; margin-top: 8px; opacity:0.9; }
       .controls { display:flex; gap:10px; justify-content:center; margin-top:12px; }
       .button { background: linear-gradient(90deg, #58ffd9, #85b6ff); color:#051024; padding:10px 16px; border:none; border-radius:10px; cursor:pointer; font-family: inherit; font-weight:600; }
       .button.secondary { background: transparent; color:#cfe4ff; border:1px solid rgba(255,255,255,0.15); }
+      
+      /* Mobile Controls */
+      .mobile-controls {
+        display: none;
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        gap: 20px;
+      }
+      
+      .mobile-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: none;
+        background: linear-gradient(135deg, #58ffd9, #85b6ff);
+        color: #051024;
+        font-size: 24px;
+        font-weight: bold;
+        cursor: pointer;
+        box-shadow: 0 4px 15px rgba(88, 255, 217, 0.3);
+        transition: all 0.2s ease;
+        touch-action: manipulation;
+      }
+      
+      .mobile-btn:active {
+        transform: scale(0.95);
+        box-shadow: 0 2px 8px rgba(88, 255, 217, 0.4);
+      }
+      
+      .mobile-btn.up { background: linear-gradient(135deg, #58ffd9, #4ac8b0); }
+      .mobile-btn.down { background: linear-gradient(135deg, #85b6ff, #6a9bff); }
+      
+      /* Show mobile controls on touch devices */
+      @media (hover: none) and (pointer: coarse) {
+        .mobile-controls {
+          display: flex;
+        }
+        
+        .page {
+          padding-bottom: 100px;
+        }
+      }
+      
+      /* Prevent text selection on mobile */
+      * {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
     </style>
   </head>
   <body>
@@ -35,12 +104,21 @@
         <button class="button secondary" id="toggleAI">AI: On</button>
       </div>
     </div>
+    
+    <!-- Mobile Controls -->
+    <div class="mobile-controls">
+      <button class="mobile-btn up" id="mobileUp">↑</button>
+      <button class="mobile-btn down" id="mobileDown">↓</button>
+    </div>
+    
     <script>
       const canvas = document.getElementById('game');
       const ctx = canvas.getContext('2d');
       const scoreEl = document.getElementById('score');
       const newBtn = document.getElementById('newGame');
       const toggleAI = document.getElementById('toggleAI');
+      const mobileUp = document.getElementById('mobileUp');
+      const mobileDown = document.getElementById('mobileDown');
 
       const W = canvas.width, H = canvas.height;
       const PADDLE_W = 12, PADDLE_H = 90, BALL_R = 9;
@@ -58,6 +136,8 @@
         keys: { up:false, down:false },
         aiEnabled: true,
         running: true,
+        touchStartY: null,
+        isTouching: false
       };
 
       function resetBall(toLeft = false){
@@ -159,6 +239,7 @@
         requestAnimationFrame(frame);
       }
 
+      // Keyboard controls
       document.addEventListener('keydown', (e)=>{
         if (e.key === 'ArrowUp' || e.key === 'w') state.keys.up = true;
         if (e.key === 'ArrowDown' || e.key === 's') state.keys.down = true;
@@ -166,6 +247,73 @@
       document.addEventListener('keyup', (e)=>{
         if (e.key === 'ArrowUp' || e.key === 'w') state.keys.up = false;
         if (e.key === 'ArrowDown' || e.key === 's') state.keys.down = false;
+      });
+
+      // Mobile button controls
+      mobileUp.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        state.keys.up = true;
+      });
+      mobileUp.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        state.keys.up = false;
+      });
+      mobileDown.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        state.keys.down = true;
+      });
+      mobileDown.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        state.keys.down = false;
+      });
+
+      // Touch/drag controls on canvas
+      function getCanvasTouchY(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        return (e.clientY - rect.top) * scaleY;
+      }
+
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        state.isTouching = true;
+        state.touchStartY = getCanvasTouchY(e.touches[0]);
+      });
+
+      canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (!state.isTouching) return;
+        
+        const currentY = getCanvasTouchY(e.touches[0]);
+        const deltaY = currentY - state.touchStartY;
+        
+        // Move paddle based on touch movement
+        const targetY = state.leftY + deltaY * 0.5;
+        state.leftY = Math.max(20, Math.min(H-20-PADDLE_H, targetY));
+        state.touchStartY = currentY;
+      });
+
+      canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        state.isTouching = false;
+        state.touchStartY = null;
+      });
+
+      // Prevent context menu on long press
+      canvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+      });
+
+      // Prevent zoom on double tap
+      let lastTap = 0;
+      canvas.addEventListener('touchend', (e) => {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap;
+        if (tapLength < 500 && tapLength > 0) {
+          e.preventDefault();
+        }
+        lastTap = currentTime;
       });
 
       newBtn.addEventListener('click', ()=>{
